@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dudh Ka Hisab</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+  <footer class="text-center text-xs text-gray-400 py-4 fixed bottom-0 w-full bg-white border-t">
+    Developed by <span class="text-gray font-semibold">Sanjiv Yadav</span>
+  </footer>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { jsPDF } = window.jspdf;
+
+    function App() {
+      const today = new Date();
+      const formattedToday = today.toISOString().split("T")[0];
+      const [entries, setEntries] = useState([]);
+      const [date, setDate] = useState(formattedToday);
+      const [quantity, setQuantity] = useState('');
+      const [rate, setRate] = useState('');
+      const [savedRate, setSavedRate] = useState(localStorage.getItem('defaultRate') || '');
+      const [showSettings, setShowSettings] = useState(false);
+      const [editId, setEditId] = useState(null);
+      const [menuOpenId, setMenuOpenId] = useState(null);
+      const settingsRef = useRef();
+      const menuRefs = useRef({});
+      const [selectedMonth, setSelectedMonth] = useState((today.getMonth() + 1).toString().padStart(2, '0'));
+      const [payment, setPayment] = useState(parseFloat(localStorage.getItem('payment') || '') || '');
+      const [paymentHistory, setPaymentHistory] = useState(JSON.parse(localStorage.getItem('paymentHistory') || '[]'));
+      const [tempPayment, setTempPayment] = useState('');
+      const [showRateInput, setShowRateInput] = useState(false);
+      const [showPaymentInput, setShowPaymentInput] = useState(false);
+
+      useEffect(() => {
+        const saved = localStorage.getItem('milkEntriesV2');
+        if (saved) setEntries(JSON.parse(saved));
+      }, []);
+
+      useEffect(() => {
+        localStorage.setItem('milkEntriesV2', JSON.stringify(entries));
+      }, [entries]);
+
+      useEffect(() => {
+        function handleClickOutside(event) {
+          if (settingsRef.current && !settingsRef.current.contains(event.target)) {
+            setShowSettings(false);
+          }
+          if (menuOpenId !== null) {
+            const menuRef = menuRefs.current[menuOpenId];
+            if (menuRef && !menuRef.contains(event.target)) {
+              setMenuOpenId(null);
+            }
+          }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+      }, [menuOpenId]);
+
+      useEffect(() => {
+        if (savedRate && !editId) {
+          setRate(savedRate);
+        }
+      }, [savedRate, editId]);
+
+      useEffect(() => {
+        localStorage.setItem('payment', payment.toString());
+        localStorage.setItem('paymentHistory', JSON.stringify(paymentHistory));
+      }, [payment, paymentHistory]);
+
+      const formatDate = (d) => new Date(d).toLocaleDateString('en-GB');
+
+      const handleAddEntry = (e) => {
+        e.preventDefault();
+        const actualRate = editId ? rate : savedRate;
+        if (!date || !quantity || !actualRate) return;
+
+        const entry = {
+          id: Date.now(),
+          date,
+          quantity: parseFloat(quantity),
+          rate: parseFloat(actualRate),
+          total: parseFloat(quantity) * parseFloat(actualRate)
+        };
+
+        if (editId) {
+          setEntries(entries.map(e => e.id === editId ? { ...entry, id: editId } : e));
+          setEditId(null);
+        } else {
+          setEntries([entry, ...entries]);
+        }
+
+        setDate(formattedToday);
+        setQuantity('');
+        setRate(savedRate);
+      };
+
+      const handleEdit = (id) => {
+        const e = entries.find(e => e.id === id);
+        setDate(e.date);
+        setQuantity(e.quantity);
+        setRate(e.rate);
+        setEditId(id);
+        setMenuOpenId(null);
+      };
+
+      const handleDelete = (id) => {
+        setEntries(entries.filter(e => e.id !== id));
+        setMenuOpenId(null);
+      };
+
+      const addPayment = (value) => {
+        const parsed = parseFloat(value);
+        if (!isNaN(parsed)) {
+          const newPayment = (parseFloat(payment) || 0) + parsed;
+          setPayment(newPayment);
+          setPaymentHistory([{ date: formattedToday, amount: parsed }, ...paymentHistory]);
+          setTempPayment('');
+        }
+      };
+
+      const filtered = entries.filter(e => {
+        const d = new Date(e.date);
+        return (d.getMonth() + 1) === parseInt(selectedMonth);
+      });
+
+      const totalMilk = filtered.reduce((a, e) => a + e.quantity, 0);
+      const totalAmount = filtered.reduce((a, e) => a + e.total, 0);
+      const balance = payment - totalAmount;
+      const lastPayment = paymentHistory.length > 0 ? paymentHistory[0].amount : 0;
+
+      const downloadPDF = () => {
+        try {
+          if (!window.jspdf || !window.jspdf.jsPDF) {
+            alert("PDF library failed to load. Please try again later.");
+            return;
+          }
+
+          const doc = new jsPDF();
+          const pageWidth = doc.internal.pageSize.getWidth();
+          const pageHeight = doc.internal.pageSize.getHeight();
+          const margin = 14;
+          let y = margin;
+
+          // Header
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(18);
+          doc.text("Dudh Ka Hisab", margin, y);
+          doc.setFontSize(12);
+          doc.text(`Generated: ${formatDate(new Date())}`, pageWidth - margin, y, { align: "right" });
+          y += 8;
+          doc.text(`Month: ${new Date(0, parseInt(selectedMonth) - 1).toLocaleString('en', { month: 'long' })}`, margin, y);
+          y += 10;
+
+          // Table Headers
+          const headers = ["Date", "Qty (L)", "Rate (Rs)", "Total (Rs)"];
+          const colWidths = [50, 40, 40, 40];
+          const colPositions = [margin, margin + 50, margin + 90, margin + 130];
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(10);
+          doc.setFillColor(220, 220, 220);
+          doc.rect(margin, y - 4, colWidths.reduce((a, w) => a + w, 0), 8, 'F');
+          headers.forEach((header, i) => {
+            doc.text(header, colPositions[i] + colWidths[i] / 2, y, { align: "center" });
+          });
+          y += 2;
+          doc.setLineWidth(0.2);
+          doc.line(margin, y, margin + colWidths.reduce((a, w) => a + w, 0), y);
+          headers.forEach((_, i) => {
+            doc.line(colPositions[i], y - 6, colPositions[i], y + 2);
+          });
+          doc.line(margin + colWidths.reduce((a, w) => a + w, 0), y - 6, margin + colWidths.reduce((a, w) => a + w, 0), y + 2);
+          y += 6;
+          doc.setFont("helvetica", "normal");
+
+          // Calculate Previous Month's Total Amount
+          const currentMonth = parseInt(selectedMonth);
+          const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+          const prevMonthEntries = entries.filter(e => {
+            const d = new Date(e.date);
+            return (d.getMonth() + 1) === prevMonth;
+          });
+          const prevTotalAmount = prevMonthEntries.reduce((a, e) => a + e.total, 0);
+          const prevPayments = paymentHistory.filter(p => {
+            const paymentDate = new Date(p.date);
+            return paymentDate.getMonth() + 1 <= prevMonth;
+          });
+          const prevPaymentTotal = prevPayments.reduce((a, p) => a + p.amount, 0);
+
+          // Table Rows
+          filtered.forEach((e, index) => {
+            if (y > pageHeight - 40) {
+              doc.addPage();
+              y = margin;
+              doc.setFont("helvetica", "bold");
+              doc.setFillColor(220, 220, 220);
+              doc.rect(margin, y - 4, colWidths.reduce((a, w) => a + w, 0), 8, 'F');
+              headers.forEach((header, i) => {
+                doc.text(header, colPositions[i] + colWidths[i] / 2, y, { align: "center" });
+              });
+              y += 2;
+              doc.line(margin, y, margin + colWidths.reduce((a, w) => a + w, 0), y);
+              headers.forEach((_, i) => {
+                doc.line(colPositions[i], y - 6, colPositions[i], y + 2);
+              });
+              doc.line(margin + colWidths.reduce((a, w) => a + w, 0), y - 6, margin + colWidths.reduce((a, w) => a + w, 0), y + 2);
+              y += 6;
+              doc.setFont("helvetica", "normal");
+            }
+            doc.text(formatDate(e.date), colPositions[0] + colWidths[0] / 2, y, { align: "center" });
+            doc.text(e.quantity.toFixed(1), colPositions[1] + colWidths[1] / 2, y, { align: "center" });
+            doc.text(e.rate.toFixed(2), colPositions[2] + colWidths[2] / 2, y, { align: "center" });
+            doc.text(e.total.toFixed(2), colPositions[3] + colWidths[3] / 2, y, { align: "center" });
+            doc.line(margin, y + 2, margin + colWidths.reduce((a, w) => a + w, 0), y + 2);
+            headers.forEach((_, i) => {
+              doc.line(colPositions[i], y - 6, colPositions[i], y + 2);
+            });
+            doc.line(margin + colWidths.reduce((a, w) => a + w, 0), y - 6, margin + colWidths.reduce((a, w) => a + w, 0), y + 2);
+            y += 8;
+          });
+
+          // Table Footer Line
+          doc.line(margin, y - 6, margin + colWidths.reduce((a, w) => a + w, 0), y - 6);
+          y += 10;
+
+          // Summary
+          const prevTotalMilk = prevMonthEntries.reduce((a, e) => a + e.quantity, 0);
+          doc.setFont("helvetica", "bold");
+          doc.text(`Total Milk: ${totalMilk.toFixed(2)} L`, margin, y);
+          doc.text(`Current Month Total Amount: Rs ${totalAmount.toFixed(2)}`, margin + 90, y);
+          y += 6;
+          doc.text(`Previous Month Milk: ${prevTotalMilk.toFixed(2)} L`, margin, y);
+          doc.text(`Previous Month Total Amount: Rs ${prevTotalAmount.toFixed(2)}`, margin + 90, y);
+          y += 6;
+          doc.text(`Total Amount: Rs ${(prevTotalAmount + totalAmount).toFixed(2)}`, margin + 90, y);
+          y += 6;
+          doc.text(`Last Payment: Rs ${lastPayment.toFixed(2)}`, margin, y);
+
+          // Footer
+          y = pageHeight - margin;
+          doc.setFont("helvetica", "italic");
+          doc.setFontSize(8);
+          doc.text("Generated by Dudh Ka Hisab - Developed by Sanjiv Yadav", margin, y);
+
+          doc.save(`milk-record-${selectedMonth}.pdf`);
+        } catch (error) {
+          console.error("Error generating PDF:", error);
+          alert("Failed to generate PDF. Please try again.");
+        }
+      };
+
+      return (
+        <div className="max-w-xl mx-auto px-4 pt-2 pb-24 bg-white shadow-lg rounded-lg mt-2 relative min-h-screen flex flex-col">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-3xl font-bold text-blue-600">Dudh Ka Hisab</h1>
+            <button onClick={() => setShowSettings(!showSettings)} className="text-xl text-gray-500 hover:text-blue-600">⋮</button>
+          </div>
+
+          {showSettings && (
+            <div ref={settingsRef} className="absolute top-16 right-4 w-72 z-50 border p-4 rounded bg-gray-50 shadow-md">
+              <div className="flex justify-between mb-2">
+                <button onClick={() => setShowRateInput(!showRateInput)} className="px-3 py-1 bg-white border rounded shadow text-sm">Set Rate</button>
+                <button onClick={() => setShowPaymentInput(!showPaymentInput)} className="px-3 py-1 bg-white border rounded shadow text-sm">Add Balance</button>
+              </div>
+
+              {showRateInput && (
+                <div className="mb-4">
+                  <input type="number" value={rate} onChange={(e) => setRate(e.target.value)} step="0.01" className="p-2 border rounded w-full mb-2" />
+                  <button onClick={() => {
+                    setSavedRate(rate);
+                    localStorage.setItem('defaultRate', rate);
+                    setShowRateInput(false);
+                    setShowSettings(false);
+                  }} className="bg-blue-600 text-white py-1 px-3 rounded text-sm">Save Rate</button>
+                </div>
+              )}
+
+              {showPaymentInput && (
+                <div className="mb-4">
+                  <input type="number" placeholder="Enter payment" value={tempPayment} onChange={(e) => setTempPayment(e.target.value)} step="0.01" className="p-2 border rounded w-full mb-2" />
+                  <button onClick={() => {
+                    addPayment(tempPayment);
+                    setShowPaymentInput(false);
+                    setShowSettings(false);
+                  }} className="bg-green-600 text-white py-1 px-3 rounded text-sm">Save Payment</button>
+                </div>
+              )}
+
+              <p className="text-sm font-semibold mt-2">Payment History</p>
+              <ul className="text-xs max-h-24 overflow-y-auto mb-2">
+                {paymentHistory.map((p, i) => (
+                  <li key={i} className="flex justify-between py-0.5 border-b">
+                    <span>{p.date}</span>
+                    <span>₹{p.amount}</span>
+                  </li>
+                ))}
+              </ul>
+              {paymentHistory.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (confirm("Delete the last payment entry?")) {
+                      const [last, ...rest] = paymentHistory;
+                      setPaymentHistory(rest);
+                      setPayment(prev => (parseFloat(prev) || 0) - last.amount);
+                    }
+                  }}
+                  className="text-red-600 text-xs underline hover:text-red-800"
+                >
+                  Delete Last Payment
+                </button>
+              )}
+
+              <label className="block text-sm font-medium mt-4 mb-1">Filter by Month:</label>
+              <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="p-2 border rounded w-full">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <option key={i} value={(i + 1).toString().padStart(2, '0')}>
+                    {new Date(0, i).toLocaleString('en', { month: 'long' })}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <form onSubmit={handleAddEntry} className="grid gap-4 mb-4">
+            <input type="date" max={formattedToday} value={date} onChange={(e) => setDate(e.target.value)} className="p-3 border rounded w-full" required />
+            <input type="number" step="0.1" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Quantity (litres)" className="p-3 border rounded w-full" required />
+            {editId && (
+              <input type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="Rate (₹)" className="p-3 border rounded w-full" required />
+            )}
+            <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-semibold">{editId ? 'Update Entry' : 'Save Entry'}</button>
+            <button type="button" onClick={downloadPDF} className="bg-red-500 hover:bg-red-600 text-white py-2 rounded font-semibold">Download PDF</button>
+          </form>
+
+          <div className="mb-2 flex justify-between text-sm">
+            <p>Total Milk: <strong>{totalMilk.toFixed(2)} L</strong></p>
+            <p>Total Amount: <strong>₹{totalAmount.toFixed(2)}</strong></p>
+          </div>
+          <div className="mb-4 flex justify-between text-sm">
+            <p>Last Payment: <strong className="text-yellow-600">₹{lastPayment}</strong></p>
+            <p>Balance: <strong className={balance > 0 ? 'text-green-600' : balance < 0 ? 'text-red-600' : ''}>₹{balance.toFixed(2)}</strong></p>
+          </div>
+
+          <hr className="my-2 border-t border-gray-300" />
+
+          <ul className="divide-y overflow-y-auto flex-1">
+            {filtered.map(e => (
+              <li key={e.id} className="py-3 relative">
+                <div className="flex justify-between items-center text-sm text-gray-700">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setMenuOpenId(menuOpenId === e.id ? null : e.id)} className="text-gray-400 hover:text-gray-700">⋮</button>
+                    <span>{formatDate(e.date)}</span>
+                  </div>
+                  <span>₹{e.total.toFixed(2)}</span>
+                  <span className="font-bold">{e.quantity.toFixed(1)} L</span>
+                </div>
+                {menuOpenId === e.id && (
+                  <div ref={el => (menuRefs.current[e.id] = el)} className="absolute left-0 mt-2 w-32 bg-white border rounded shadow z-10">
+                    <button onClick={() => handleEdit(e.id)} className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100">Edit</button>
+                    <button onClick={() => handleDelete(e.id)} className="w-full px-4 py-2 text-sm text-left hover:bg-red-100 text-red-600">Delete</button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById("root"));
+  </script>
+</body>
+</html>
